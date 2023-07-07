@@ -8,7 +8,7 @@ namespace HealthChecks.Elasticsearch
     public class ElasticsearchOptions
     {
         public ElasticsearchOptions() { }
-        public Elasticsearch.Net.ApiKeyAuthenticationCredentials? ApiKeyAuthenticationCredentials { get; }
+        public string? ApiKey { get; }
         public bool AuthenticateWithApiKey { get; }
         public bool AuthenticateWithBasicCredentials { get; }
         public bool AuthenticateWithCertificate { get; }
@@ -19,7 +19,7 @@ namespace HealthChecks.Elasticsearch
         public string Uri { get; }
         public bool UseClusterHealthApi { get; set; }
         public string? UserName { get; }
-        public HealthChecks.Elasticsearch.ElasticsearchOptions UseApiKey(Elasticsearch.Net.ApiKeyAuthenticationCredentials apiKey) { }
+        public HealthChecks.Elasticsearch.ElasticsearchOptions UseApiKey(string apiKey) { }
         public HealthChecks.Elasticsearch.ElasticsearchOptions UseBasicAuthentication(string name, string password) { }
         public HealthChecks.Elasticsearch.ElasticsearchOptions UseCertificate(System.Security.Cryptography.X509Certificates.X509Certificate certificate) { }
         public HealthChecks.Elasticsearch.ElasticsearchOptions UseCertificateValidationCallback(System.Func<object, System.Security.Cryptography.X509Certificates.X509Certificate, System.Security.Cryptography.X509Certificates.X509Chain, System.Net.Security.SslPolicyErrors, bool> callback) { }

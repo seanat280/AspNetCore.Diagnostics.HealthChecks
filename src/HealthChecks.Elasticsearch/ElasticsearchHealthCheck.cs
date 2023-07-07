@@ -1,13 +1,14 @@
 using System.Collections.Concurrent;
-using Elasticsearch.Net;
+using Elastic.Clients.Elasticsearch;
+using Elastic.Transport;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Nest;
+using HealthStatus = Elastic.Clients.Elasticsearch.HealthStatus;
 
 namespace HealthChecks.Elasticsearch;
 
 public class ElasticsearchHealthCheck : IHealthCheck
 {
-    private static readonly ConcurrentDictionary<string, ElasticClient> _connections = new();
+    private static readonly ConcurrentDictionary<string, ElasticsearchClient> _connections = new();
 
     private readonly ElasticsearchOptions _options;
 
@@ -23,24 +24,24 @@ public class ElasticsearchHealthCheck : IHealthCheck
         {
             if (!_connections.TryGetValue(_options.Uri, out var lowLevelClient))
             {
-                var settings = new ConnectionSettings(new Uri(_options.Uri));
+                var settings = new ElasticsearchClientSettings(new Uri(_options.Uri));
 
                 if (_options.RequestTimeout.HasValue)
                 {
                     settings = settings.RequestTimeout(_options.RequestTimeout.Value);
                 }
 
-                if (_options.AuthenticateWithBasicCredentials)
+                if (_options is {AuthenticateWithBasicCredentials: true, UserName: not null, Password: not null})
                 {
-                    settings = settings.BasicAuthentication(_options.UserName, _options.Password);
+                    settings = settings.Authentication(new BasicAuthentication(_options.UserName, _options.Password));
                 }
-                else if (_options.AuthenticateWithCertificate)
+                else if (_options is {AuthenticateWithCertificate: true, Certificate: not null})
                 {
                     settings = settings.ClientCertificate(_options.Certificate);
                 }
-                else if (_options.AuthenticateWithApiKey)
+                else if (_options is {AuthenticateWithApiKey: true, ApiKey: not null})
                 {
-                    settings = settings.ApiKeyAuthentication(_options.ApiKeyAuthenticationCredentials);
+                    settings = settings.Authentication(new ApiKey(_options.ApiKey));
                 }
 
                 if (_options.CertificateValidationCallback != null)
@@ -48,7 +49,7 @@ public class ElasticsearchHealthCheck : IHealthCheck
                     settings = settings.ServerCertificateValidationCallback(_options.CertificateValidationCallback);
                 }
 
-                lowLevelClient = new ElasticClient(settings);
+                lowLevelClient = new ElasticsearchClient(settings);
 
                 if (!_connections.TryAdd(_options.Uri, lowLevelClient))
                 {
@@ -58,23 +59,23 @@ public class ElasticsearchHealthCheck : IHealthCheck
 
             if (_options.UseClusterHealthApi)
             {
-                var healthResponse = await lowLevelClient.Cluster.HealthAsync(ct: cancellationToken).ConfigureAwait(false);
+                var healthResponse = await lowLevelClient.Cluster.HealthAsync(cancellationToken).ConfigureAwait(false);
 
-                if (healthResponse.ApiCall.HttpStatusCode != 200)
+                if (healthResponse.ApiCallDetails.HttpStatusCode != 200)
                 {
                     return new HealthCheckResult(context.Registration.FailureStatus);
                 }
 
                 return healthResponse.Status switch
                 {
-                    Health.Green => HealthCheckResult.Healthy(),
-                    Health.Yellow => HealthCheckResult.Degraded(),
+                    HealthStatus.Green => HealthCheckResult.Healthy(),
+                    HealthStatus.Yellow => HealthCheckResult.Degraded(),
                     _ => new HealthCheckResult(context.Registration.FailureStatus)
                 };
             }
 
-            var pingResult = await lowLevelClient.PingAsync(ct: cancellationToken).ConfigureAwait(false);
-            bool isSuccess = pingResult.ApiCall.HttpStatusCode == 200;
+            var pingResult = await lowLevelClient.PingAsync(cancellationToken).ConfigureAwait(false);
+            bool isSuccess = pingResult.ApiCallDetails.HttpStatusCode == 200;
 
             return isSuccess
                 ? HealthCheckResult.Healthy()
