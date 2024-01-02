@@ -4,15 +4,15 @@ using MySqlConnector;
 namespace HealthChecks.MySql;
 
 /// <summary>
-/// A health check for MySql databases.
+/// A health check for MySQL databases.
 /// </summary>
 public class MySqlHealthCheck : IHealthCheck
 {
-    private readonly string _connectionString;
+    private readonly MySqlHealthCheckOptions _options;
 
-    public MySqlHealthCheck(string connectionString)
+    public MySqlHealthCheck(MySqlHealthCheckOptions options)
     {
-        _connectionString = Guard.ThrowIfNull(connectionString);
+        _options = Guard.ThrowIfNull(options);
     }
 
     /// <inheritdoc />
@@ -20,13 +20,30 @@ public class MySqlHealthCheck : IHealthCheck
     {
         try
         {
-            using var connection = new MySqlConnection(_connectionString);
+            using var connection = _options.DataSource is not null ?
+                _options.DataSource.CreateConnection() :
+                new MySqlConnection(_options.ConnectionString);
 
+            _options.Configure?.Invoke(connection);
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
 
-            return await connection.PingAsync(cancellationToken).ConfigureAwait(false)
-                ? HealthCheckResult.Healthy()
-                : new HealthCheckResult(context.Registration.FailureStatus, description: $"The {nameof(MySqlHealthCheck)} check fail.");
+            if (_options.CommandText is { } commandText)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = _options.CommandText;
+                object? result = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+
+                return _options.HealthCheckResultBuilder == null
+                    ? HealthCheckResult.Healthy()
+                    : _options.HealthCheckResultBuilder(result);
+            }
+            else
+            {
+                var success = await connection.PingAsync(cancellationToken).ConfigureAwait(false);
+                return _options.HealthCheckResultBuilder is null
+                    ? (success ? HealthCheckResult.Healthy() : new HealthCheckResult(context.Registration.FailureStatus)) :
+                    _options.HealthCheckResultBuilder(success);
+            }
         }
         catch (Exception ex)
         {

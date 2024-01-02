@@ -26,7 +26,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -52,7 +52,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -76,7 +76,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
     }
@@ -98,7 +98,7 @@ public class rabbitmq_healthcheck_should
             {
                 services
                     .AddHealthChecks()
-                    .AddRabbitMQ(sp => factory, tags: new string[] { "rabbitmq" });
+                    .AddRabbitMQ(options => options.ConnectionFactory = factory, tags: new string[] { "rabbitmq" });
             })
             .Configure(app =>
             {
@@ -110,7 +110,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -147,7 +147,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -173,7 +173,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
@@ -207,7 +207,7 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response1 = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response1 = await server.CreateRequest("/health").GetAsync();
         response1.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
     }
 
@@ -221,7 +221,7 @@ public class rabbitmq_healthcheck_should
             {
                 services
                     .AddHealthChecks()
-                    .AddRabbitMQ(_ => new Uri(connectionString), tags: new string[] { "rabbitmq" });
+                    .AddRabbitMQ(options => options.ConnectionUri = new Uri(connectionString), tags: new string[] { "rabbitmq" });
 
             })
             .Configure(app =>
@@ -234,8 +234,68 @@ public class rabbitmq_healthcheck_should
 
         using var server = new TestServer(webHostBuilder);
 
-        var response = await server.CreateRequest($"/health").GetAsync().ConfigureAwait(false);
+        using var response = await server.CreateRequest("/health").GetAsync();
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task two_rabbitmq_health_check()
+    {
+        const string connectionString1 = "amqp://localhost:5672";
+        const string connectionString2 = "amqp://localhost:6672/";
+
+        var webHostBuilder = new WebHostBuilder()
+            .ConfigureServices(services =>
+            {
+                services.AddHealthChecks()
+                    .AddRabbitMQ(rabbitConnectionString: connectionString1, name: "rabbitmq1")
+                    .AddRabbitMQ(rabbitConnectionString: connectionString2, name: "rabbitmq2");
+            })
+            .Configure(app =>
+            {
+                app.UseHealthChecks("/health1", new HealthCheckOptions
+                {
+                    Predicate = r => r.Name.Equals("rabbitmq1")
+                });
+                app.UseHealthChecks("/health2", new HealthCheckOptions
+                {
+                    Predicate = r => r.Name.Equals("rabbitmq2")
+                });
+            });
+
+        using var server = new TestServer(webHostBuilder);
+
+        using var response1 = await server.CreateRequest("/health1").GetAsync();
+        using var response2 = await server.CreateRequest("/health2").GetAsync();
+
+        response1.StatusCode.ShouldBe(HttpStatusCode.OK);
+        response2.StatusCode.ShouldBe(HttpStatusCode.ServiceUnavailable);
+    }
+
+    // https://github.com/Xabaril/AspNetCore.Diagnostics.HealthChecks/issues/714
+    [Fact]
+    public async Task should_respect_timeout()
+    {
+        var services = new ServiceCollection();
+
+        services
+            .AddLogging()
+            .AddHealthChecks()
+            .AddRabbitMQ(opt =>
+                {
+                    opt.RequestedConnectionTimeout = TimeSpan.FromSeconds(1);
+                    opt.ConnectionUri = new Uri($"amqps://user:pwd@invalid-host:5672");
+                },
+                timeout: TimeSpan.FromSeconds(10));
+
+        using var provider = services.BuildServiceProvider();
+        var healthCheckService = provider.GetRequiredService<HealthCheckService>();
+        var start = DateTime.Now;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var report = await healthCheckService.CheckHealthAsync(cts.Token);
+        report.Status.ShouldBe(HealthStatus.Unhealthy);
+        var end = DateTime.Now;
+        (end - start).ShouldBeLessThan(TimeSpan.FromSeconds(10));
     }
 }
